@@ -8,7 +8,7 @@ module
 
 
 -- Import vertex cover to prove that hitting set is NP hard
-public import CslibFrontier.Computability.Complexity.Problems.vertexCover
+public import CslibFrontier.Computability.Complexity.Problems.VertexCover
 public import CslibFrontier.Computability.Machines.Turing.MultiTape.Encodings.Structure
 import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.Nat
 import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.List
@@ -16,6 +16,8 @@ import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime
 import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.BitString
 import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.Membership
 import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.Length
+import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.Nat.Binary
+import CslibFrontier.Computability.Machines.Turing.MultiTape.Complexity.PolyTime.EraseDupsBy
 
 /-!
 # Hitting Set
@@ -68,7 +70,7 @@ enc_structure encHittingSet : HittingSetInstance where
 /-- Instances admitting a hitting set of exactly k elements from the universe. -/
 def HittingSet : Set HittingSetInstance := {x | ∃ H : Finset {u // u ∈ x.finiteUniverse},
   -- for all subsets of S atleast 1 element of H belongs to S
-  H.card = x.k ∧ ∀ S ∈ x.subsets, ∃ u ∈ H, (u : ℕ) ∈ S}
+  H.card ≤ x.k ∧ ∀ S ∈ x.subsets, ∃ u ∈ H, (u : ℕ) ∈ S}
 
 -- sets = [[1, 2], [2, 3], [3, 4]]
 -- selected = [2, 3]
@@ -82,7 +84,7 @@ def isHittingSet (sets : List (List ℕ)) (selected : List ℕ) : Bool :=
 and checking its card and intersection with every subset. -/
 def HittingSet.verifier : HittingSetInstance × List Bool → Bool :=
   subsetVerifier (fun x => x.finiteUniverse) fun y =>
-    decide (y.2.length = y.1.k) &&
+    decide (y.2.length ≤ y.1.k) &&
     isHittingSet y.1.subsets y.2
 
 /-- Proves that isHittingSet returns true exactly when the selected elements hit every subset -/
@@ -104,7 +106,7 @@ isHittingSet sets selected = true ↔
 -- which helps make the verifier correctness proof and
 reduction from vertex cover easier to express. -/
 theorem mem_HittingSet_iff (x : HittingSetInstance) : x ∈ HittingSet ↔ ∃ H : Finset ℕ,
-(∀ u ∈ H, u ∈ x.finiteUniverse) ∧ H.card = x.k ∧ (∀ S ∈ x.subsets, ∃ u ∈ H, u ∈ S) := by
+(∀ u ∈ H, u ∈ x.finiteUniverse) ∧ H.card ≤ x.k ∧ (∀ S ∈ x.subsets, ∃ u ∈ H, u ∈ S) := by
   unfold HittingSet
   simp only [Set.mem_ofPred_eq]
   -- convert a finite set of subtype elements into a finite set of nats
@@ -119,7 +121,7 @@ theorem mem_HittingSet_iff (x : HittingSetInstance) : x ∈ HittingSet ↔ ∃ H
       obtain ⟨v, hv, rfl⟩ := Finset.mem_map.mp hu
       exact v.property
     -- mapping through an embedding preserves cardinality
-    · change (H.map (Function.Embedding.subtype _)).card = x.k
+    · change (H.map (Function.Embedding.subtype _)).card ≤  x.k
       rw [Finset.card_map]
       exact hcard
     -- every subset hit by H is also hit by H'
@@ -142,7 +144,7 @@ theorem mem_HittingSet_iff (x : HittingSetInstance) : x ∈ HittingSet ↔ ∃ H
             (fun v : {u // u ∈ x.finiteUniverse} => v.val) h⟩
     refine ⟨H', ?_, ?_⟩
     -- Attachig proofs and mapping through an embedding does not change the # of selected elem
-    · change (H.attach.map _).card = x.k
+    · change (H.attach.map _).card ≤  x.k
       rw [Finset.card_map, Finset.card_attach]
       exact hcard
     -- every subset hit by H is also hit by H'
@@ -162,7 +164,7 @@ theorem HittingSet.isVerifier : IsVerifier encHittingSet Polynomial.X
   HittingSet.verifier HittingSet := by
   -- Rewrite hitting set membership using Finset N instead of a finite set of subtype elem
   have hset : HittingSet = {x | ∃ H : Finset ℕ,
-    (∀ u ∈ H, u ∈ x.finiteUniverse) ∧ H.card = x.k ∧ (∀ S ∈ x.subsets, ∃ u ∈ H, u ∈ S)} :=
+    (∀ u ∈ H, u ∈ x.finiteUniverse) ∧ H.card ≤  x.k ∧ (∀ S ∈ x.subsets, ∃ u ∈ H, u ∈ S)} :=
   Set.ext fun x => by simpa only [Set.mem_ofPred_eq] using mem_HittingSet_iff x
   rw [hset]
   -- Use the general subset verifier theorem
@@ -233,8 +235,32 @@ theorem computableInPolyTime_isHittingSet : ComputableInPolyTime
   unfold isHittingSet
   fun_prop
 
--- #check Turing.MultiTapeTM.ComputableTidilyInPolyTime.allWith
--- #check Turing.MultiTapeTM.ComputableTidilyInPolyTime.anyWith
+/-- Checking whether a unary-encoded number is at most a binary-encoded
+number can be done in polynomial time. We need this for the Hitting Set verifier,
+where the certificate length is computed in unary but k is in binary.
+
+Instead of comparing the two numbers directly, we compute their minimum
+in unary and check whether it equals the first number. This works because
+a ≤ b exactly when min a b = a -/
+private theorem computableInPolyTime_unary_le_binary : ComputableInPolyTime
+  (fun p : ℕ × ℕ => decide (p.1 ≤ p.2)) (encPair encUnary encNat) encBool := by
+  -- Compute min(a, b) in unary
+  have hmin : ComputableInPolyTime
+      (fun p : ℕ × ℕ => min p.1 p.2)
+      (encPair encUnary encNat)
+      encUnary := by
+    apply ComputableInPolyTime.binary_min_unary'
+    · fun_prop
+    · fun_prop
+  -- Check whether min(a, b) = a
+  have heq : ComputableInPolyTime
+      (fun p : ℕ × ℕ => decide (min p.1 p.2 = p.1))
+      (encPair encUnary encNat)
+      encBool :=
+    hmin.decide_eq' (by fun_prop)
+  -- min(a, b) = a iff a ≤ b.
+  simpa only [min_eq_left_iff] using heq
+
 
 /-- The Hitting Set verifier runs in polynomial time.
 -- We do this by proving the complexity of the verifier by composing smaller
@@ -251,17 +277,19 @@ theorem HittingSet.computableInPolyTime_verifier : ComputableInPolyTime HittingS
   · fun_prop
   -- The verifier does 2 bool checks and we prove that each check is poly time
   · refine bool_and' ?_ ?_
-    -- Checking that # of selected elements = k is poly time
-    · exact ((length_list_binary encNat).comp (snd _ _)).decide_eq' (by fun_prop)
-    -- Extracting the collection of subsets and the selected elements from the verifier
-    -- input is poly time
     · have hp : ComputableInPolyTime
-          (fun y : HittingSetInstance × List ℕ => (y.1.subsets, y.2))
+        (fun y : HittingSetInstance × List ℕ => (y.2.length, y.1.k)) (encPair encHittingSet (encList encNat))
+        (encPair encUnary encNat) := by
+        refine ComputableInPolyTime.prod ?_ ?_
+        · exact (length_list encNat).comp (snd _ _)
+        · fun_prop
+      exact computableInPolyTime_unary_le_binary.comp hp
+    -- Check that the selected elements form a hitting set
+    · have hp : ComputableInPolyTime
+        (fun y : HittingSetInstance × List ℕ => (y.1.subsets, y.2))
           (encPair encHittingSet (encList encNat))
           (encPair (encList (encList encNat)) (encList encNat)) := by
-        unfold encHittingSet
         fun_prop
-      -- compose the extraction with our poly time hitting set checker
       exact computableInPolyTime_isHittingSet.comp hp
 
 /-- Reduce from vertex cover to a hittings set instance.
@@ -276,7 +304,10 @@ def vertexCoverToHittingSet (x : Graph × ℕ) : HittingSetInstance :=
     decide (v ∈ vertices) &&
     decide (u ≠ v)
   -- convert each leftover (u, v) into [u, v]
-  let subsets := edges.map fun (u, v) => [u, v]
+  let edgeSubsets := edges.map fun (u, v) => [u, v]
+  -- If k > then # distinct vertices then it's a no instance
+  -- this is an empty subset which no hitting set can hit
+  let subsets := if k ≤ vertices.toFinset.card then edgeSubsets else []::edgeSubsets
   -- construct hitting set intance using the same target size k
   { finiteUniverse := vertices, subsets := subsets, k := k }
 
@@ -294,67 +325,84 @@ theorem vertexCoverToHittingSet_mem_iff (x : Graph × ℕ) :
   rw [mem_VertexCover_iff]
   -- graph adj using edge list
   simp only [Graph.toSimpleGraph_adj]
+  -- split based on whether k is atmost # of distinct vertices
+  split_ifs with hk
   -- xpand membership in the filtered and mapped edge list
-  simp only [List.mem_map, List.mem_filter, Bool.and_eq_true, decide_eq_true_eq]
-  constructor
+  · simp only [List.mem_map, List.mem_filter, Bool.and_eq_true, decide_eq_true_eq]
+    constructor
   -- Forward: hitting set gives us vertex cover
-  · rintro ⟨H, hmem, hcard, hhit⟩
-    -- Same H as in vertex cover
-    -- Mebership in U and cardinality are known
-    refine ⟨H, hmem, ?_, hcard⟩
-    -- consider ny 2 distinct vertices conn by an edge
-    intro u hu v hv ⟨hne, hedge⟩
-    -- the edge may appear in either orientation in the graphs edge list
-    rcases hedge with hedge | hedge
-    -- case 1: (u, v) ∈ graph
-    · have hhit_uv := hhit [u, v] (by
-        -- show that [u, v] is one of the subsets created by the reduction
-        refine ⟨(u, v), ?_, rfl⟩
-        exact ⟨hedge, ⟨hu, hv⟩, hne⟩)
-      -- Since H hits [u, v] some element w of H is either u or v
-      obtain ⟨w, hwH, hwlist⟩ := hhit_uv
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hwlist
-      -- Either case an endpoint of the edge belongs to H
-      rcases hwlist with hwu | hwv
-      · exact Or.inl (hwu ▸ hwH)
-      · exact Or.inr (hwv ▸ hwH)
-    -- case 2: (v, u) ∈ G
-    · have hhit_vu := hhit [v, u] (by
-      -- show that [v, u] is one of the subsets created by the reduction
-      refine ⟨(v, u), ?_, rfl⟩
-      exact ⟨hedge, ⟨hv, hu⟩, hne.symm⟩)
-      -- Hitting set contains atleast 1 endpoint
-      obtain ⟨w, hwH, hwlist⟩ := hhit_vu
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hwlist
-      -- handle 2 possible endpoints when flipped
-      rcases hwlist with hwv | hwu
-      · exact Or.inr (hwv ▸ hwH)
-      · exact Or.inl (hwu ▸ hwH)
-  -- A vertex cover gives us a hitting set
-  · rintro ⟨S, hmem, hcover, hcard⟩
-    -- use the same set S as the hitting set
-    refine ⟨S, hmem, hcard, ?_⟩
-    -- Every subset in the constructed instance comes from a valid edge
-    -- Extract that and replace the subset w/ its 2 endpoints.
-    rintro T ⟨a, ⟨ha, ⟨hu, hv⟩, hne⟩, rfl⟩
-    -- Since S is a vertexCover it contains atleast one endpoint of a
-    have h := hcover a.1 hu a.2 hv ⟨hne, Or.inl ha⟩
-    -- Use whichever endpoint belongs to S as a hitting set witness
-    rcases h with h₁ | h₂
-    -- when the first endpoint is in S and to the corresponding subset
-    · refine ⟨a.1, h₁, ?_⟩
-      simp
-    -- similarly for when the second is
-    · refine ⟨a.2, h₂, ?_⟩
-      simp
+    · rintro ⟨H, hmem, hcard, hhit⟩
+      have hsubset : H ⊆ G.1.toFinset := by
+        intro u hu
+        simpa using hmem u hu
+      have hext : ∃ S : Finset ℕ, H ⊆ S ∧ S ⊆ G.1.toFinset ∧ S.card = k := by
+        exact Finset.exists_subsuperset_card_eq hsubset hcard hk
+      obtain ⟨S, hHS, hSV, hScard⟩ := hext
+      refine ⟨S, ?_, ?_, hScard⟩
+      · intro v hv
+        exact List.mem_toFinset.mp (hSV hv)
+      · intro u hu v hv ⟨hne, hedge⟩
+        rcases hedge with hedge | hedge
+        · have hhit_uv := hhit [u, v] (by
+          refine ⟨(u, v), ?_, rfl⟩
+          exact ⟨hedge, ⟨hu, hv⟩, hne⟩)
+          obtain ⟨w, hwH, hwlist⟩ := hhit_uv
+          simp only [List.mem_cons, List.not_mem_nil, or_false] at hwlist
+          rcases hwlist with hwu | hwv
+          · exact Or.inl (hwu ▸ hHS hwH)
+          · exact Or.inr (hwv ▸ hHS hwH)
+        · have hhit_vu := hhit [v, u] (by
+          refine ⟨(v, u), ?_, rfl⟩
+          exact ⟨hedge, ⟨hv, hu⟩, hne.symm⟩)
+          obtain ⟨w, hwH, hwlist⟩ := hhit_vu
+          simp only [List.mem_cons, List.not_mem_nil, or_false] at hwlist
+          rcases hwlist with hwv | hwu
+          · exact Or.inr (hwv ▸ hHS hwH)
+          · exact Or.inl (hwu ▸ hHS hwH)
+    -- Backward: vertex cover gives us a hitting set
+    · rintro ⟨S, hmem, hcover, hcard⟩
+      refine ⟨S, hmem, hcard.le, ?_⟩
+      rintro T ⟨a, ⟨ha, ⟨hu, hv⟩, hne⟩, rfl⟩
+      have h := hcover a.1 hu a.2 hv ⟨hne, Or.inl ha⟩
+      rcases h with h₁ | h₂
+      · refine ⟨a.1, h₁, ?_⟩
+        simp
+      · refine ⟨a.2, h₂, ?_⟩
+        simp
+  -- k > # vertices
+  · constructor
+    · rintro ⟨H, hmem, hcard, hhit⟩
+      have hempty : ∃ u ∈ H, u ∈ ([] : List ℕ) := by
+        apply hhit []
+        simp
+      obtain ⟨u, huH, huEmpty⟩ := hempty
+      simp at huEmpty
+    · rintro ⟨S, hmem, hcover, hcard⟩
+      have hsubset : S ⊆ G.1.toFinset := by
+        intro v hv
+        simpa using hmem v hv
+      have hbound : S.card ≤ G.1.toFinset.card :=
+        Finset.card_le_card hsubset
+      exact False.elim (hk (hcard ▸ hbound))
 
+example : ComputableInPolyTime
+    (fun vertices : List ℕ =>
+      (vertices.eraseDupsBy (fun a b => decide (a = b))).length)
+    (encList encNat) encUnary := by
+  have herase : ComputableInPolyTime
+      (fun vertices : List ℕ =>
+        vertices.eraseDupsBy (fun a b => decide (a = b)))
+      (encList encNat) (encList encNat) := by
+    apply ComputableInPolyTime.eraseDupsByWithInput
+    · fun_prop
+    · fun_prop
+  exact (length_list encNat).comp herase
 
 /-- Converting from vertex cover to hitting set instance is poly time -/
 @[fun_prop]
 theorem computableInPolyTime_vertexCoverToHittingSet : ComputableInPolyTime vertexCoverToHittingSet
   (encPair encGraph encNat) encHittingSet := by
-  unfold vertexCoverToHittingSet
-  fun_prop
+  fun_prop [vertexCoverToHittingSet]
 
 /-- Vertex Cover reduces to Hitting Set in polynomial time -/
 theorem polyTimeReducible_VertexCover_HittingSet : PolyTimeReducible (encPair encGraph encNat)
