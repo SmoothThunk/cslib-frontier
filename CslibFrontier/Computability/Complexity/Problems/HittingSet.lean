@@ -83,6 +83,7 @@ def isHittingSet (sets : List (List ℕ)) (selected : List ℕ) : Bool :=
 /-- Verify a Hitting Set certificate by selecting universe elements
 and checking its card and intersection with every subset. -/
 def HittingSet.verifier : HittingSetInstance × List Bool → Bool :=
+  -- extract the universe
   subsetVerifier (fun x => x.finiteUniverse) fun y =>
     decide (y.2.length ≤ y.1.k) &&
     isHittingSet y.1.subsets y.2
@@ -385,24 +386,56 @@ theorem vertexCoverToHittingSet_mem_iff (x : Graph × ℕ) :
         Finset.card_le_card hsubset
       exact False.elim (hk (hcard ▸ hbound))
 
-example : ComputableInPolyTime
-    (fun vertices : List ℕ =>
-      (vertices.eraseDupsBy (fun a b => decide (a = b))).length)
-    (encList encNat) encUnary := by
-  have herase : ComputableInPolyTime
-      (fun vertices : List ℕ =>
-        vertices.eraseDupsBy (fun a b => decide (a = b)))
-      (encList encNat) (encList encNat) := by
-    apply ComputableInPolyTime.eraseDupsByWithInput
-    · fun_prop
-    · fun_prop
-  exact (length_list encNat).comp herase
+-- example : ComputableInPolyTime
+--     (fun vertices : List ℕ =>
+--       (vertices.eraseDupsBy (fun a b => decide (a = b))).length)
+--     (encList encNat) encUnary := by
+--   have herase : ComputableInPolyTime
+--       (fun vertices : List ℕ =>
+--         vertices.eraseDupsBy (fun a b => decide (a = b)))
+--       (encList encNat) (encList encNat) := by
+--     apply ComputableInPolyTime.eraseDupsByWithInput
+--     · fun_prop
+--     · fun_prop
+--   exact (length_list encNat).comp herase
+
+-- example : ComputableInPolyTime
+--     (fun p : ℕ × ℕ => decide (p.1 ≤ p.2))
+--     (encPair encNat encUnary) encBool := by
+--   fun_prop
+
+-- example : ComputableInPolyTime
+--   (fun p : List ℕ × ℕ =>
+--     decide (p.2 ≤
+--       (p.1.eraseDupsBy (fun a b => decide (a = b))).length))
+--   (encPair (encList encNat) encNat) encBool := by
+--   fun_prop
 
 /-- Converting from vertex cover to hitting set instance is poly time -/
 @[fun_prop]
 theorem computableInPolyTime_vertexCoverToHittingSet : ComputableInPolyTime vertexCoverToHittingSet
   (encPair encGraph encNat) encHittingSet := by
-  fun_prop [vertexCoverToHittingSet]
+  --hle is the proof that we can check if k <= |V| in poly time.
+  have hle : ComputableInPolyTime (fun x : Graph × ℕ => decide (x.2 ≤ x.1.1.toFinset.card))
+      (encPair encGraph encNat) encBool := by
+    simp_rw [← Graph.length_distinctVertices]
+    fun_prop
+  -- claude: why are you redefining this as the same definition we have
+  -- TODO: redo vertexCoverToHttingSet def to see if the types are good
+  have heq : vertexCoverToHittingSet = fun x : Graph × ℕ =>
+      let edgeSubsets := (x.1.2.filter fun e =>
+        decide (e.1 ∈ x.1.1) && decide (e.2 ∈ x.1.1) && decide (e.1 ≠ e.2)).map
+          fun e => [e.1, e.2]
+      ({ finiteUniverse := x.1.1,
+         subsets := if decide (x.2 ≤ x.1.1.toFinset.card) then edgeSubsets
+           else [] :: edgeSubsets,
+         k := x.2 } : HittingSetInstance) := by
+    funext ⟨⟨V, E⟩, k⟩
+    simp only [vertexCoverToHittingSet, decide_eq_true_eq]
+  rw [heq]
+  unfold encGraph
+  exact encHittingSet_mk_polyTime (by fun_prop) (ite' hle (by fun_prop) (by fun_prop)) (snd _ _)
+  -- fun_prop [vertexCoverToHittingSet]
 
 /-- Vertex Cover reduces to Hitting Set in polynomial time -/
 theorem polyTimeReducible_VertexCover_HittingSet : PolyTimeReducible (encPair encGraph encNat)
